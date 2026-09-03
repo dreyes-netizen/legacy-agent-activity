@@ -33,18 +33,34 @@ type LoginState =
 
 type SortKey = 'name' | 'login' | 'session' | 'online' | 'talk' | 'occupancy';
 
+/**
+ * How the login column is populated. login_time is only ever correct at the
+ * exact grain it was queried for, so each anchor needs a different source:
+ *
+ *   fetch        one continuous window -> /api/login-exact (client fetch, so
+ *                the additive columns are usable immediately)
+ *   given        shift anchor -> already supplied from agent_shift, which the
+ *                sync wrote from each shift's own window
+ *   unavailable  multi-day custom time window -> would need one CTM call per
+ *                day, too slow for a request, so it is not offered
+ */
+export type LoginMode = 'fetch' | 'given' | 'unavailable';
+
 export function AgentTable({
   rows,
+  loginMode,
   windowStartIso,
   windowEndIso,
-  /** login is not offered when a time-of-day filter is active: an exact figure
-   *  would need one CTM call per day in the range, too slow for a request. */
-  loginAvailable,
+  givenLogin,
+  missingLoginCount = 0,
 }: {
   rows: TableRow[];
-  windowStartIso: string;
-  windowEndIso: string;
-  loginAvailable: boolean;
+  loginMode: LoginMode;
+  windowStartIso: string | null;
+  windowEndIso: string | null;
+  givenLogin?: Record<string, number | null>;
+  /** Shift occurrences with no exact login row yet -- surfaced, not hidden. */
+  missingLoginCount?: number;
 }) {
   const [login, setLogin] = useState<LoginState>({ status: 'idle' });
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
@@ -56,7 +72,16 @@ export function AgentTable({
   // separately once the additive columns are already on screen. The table is
   // useful immediately; this one column fills in a beat later.
   useEffect(() => {
-    if (!loginAvailable) {
+    if (loginMode === 'unavailable') {
+      setLogin({ status: 'unavailable' });
+      return;
+    }
+    if (loginMode === 'given') {
+      // Already exact, straight from agent_shift -- nothing to fetch.
+      setLogin({ status: 'ready', login: {}, source: 'shift' });
+      return;
+    }
+    if (!windowStartIso || !windowEndIso) {
       setLogin({ status: 'unavailable' });
       return;
     }
@@ -77,10 +102,12 @@ export function AgentTable({
         });
       });
     return () => controller.abort();
-  }, [windowStartIso, windowEndIso, loginAvailable]);
+  }, [windowStartIso, windowEndIso, loginMode]);
 
-  const loginFor = (id: string) =>
-    login.status === 'ready' ? (login.login[id] ?? 0) : null;
+  const loginFor = (id: string): number | null => {
+    if (loginMode === 'given') return givenLogin?.[id] ?? null;
+    return login.status === 'ready' ? (login.login[id] ?? 0) : null;
+  };
 
   const sorted = useMemo(() => {
     const value = (row: TableRow): number | string => {
@@ -257,8 +284,14 @@ export function AgentTable({
 
       <p className="px-4 py-2.5 text-2xs text-muted border-t border-border">
         Durations as H:MM:SS. Session = Online + Talk (verified exact).
-        {login.status === 'ready' && login.source === 'ctm' && ' Login queried live from CTM.'}
-        {login.status === 'ready' && login.source === 'cache' && ' Login served from cache.'}
+        {loginMode === 'given' && ' Login from each shift’s own exact window.'}
+        {loginMode === 'fetch' && login.status === 'ready' && login.source === 'ctm' &&
+          ' Login queried live from CTM.'}
+        {loginMode === 'fetch' && login.status === 'ready' && login.source === 'cache' &&
+          ' Login served from cache.'}
+        {missingLoginCount > 0 &&
+          ` ${missingLoginCount} shift occurrence${missingLoginCount === 1 ? '' : 's'} not yet
+            synced for login — the hourly settle pass will fill them in.`}
       </p>
     </div>
   );

@@ -1,16 +1,16 @@
-import { Users, Clock, Radio, PhoneCall } from 'lucide-react';
+import Link from 'next/link';
+import { Users, Clock, Radio, PhoneCall, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StatTile } from '@/components/ui/StatTile';
 import { FreshnessBadge } from '@/components/ui/FreshnessBadge';
 import { FilterBar } from '@/components/filters/FilterBar';
-import { AgentTable } from '@/components/agents/AgentTable';
+import { AgentTable, type TableRow } from '@/components/agents/AgentTable';
 import { getSyncStatus } from '@/lib/queries';
 import { getAgentOptions, getAgentTotals, resolveWindow } from '@/lib/metrics';
+import { countShifts, getShiftAnchoredTotals } from '@/lib/shifts';
 import { describeRange, localBounds, parseFilters, type RawFilterParams } from '@/lib/filters';
 import { ZONE_LABEL, dateTimeIn, hms } from '@/lib/time';
 
-// The sync writes every few minutes and the filters live in the URL, so there
-// is nothing worth caching at the page level.
 export const dynamic = 'force-dynamic';
 
 export default async function OverviewPage({
@@ -19,20 +19,52 @@ export default async function OverviewPage({
   searchParams: RawFilterParams;
 }) {
   const filters = parseFilters(searchParams);
-  const bounds = localBounds(filters);
+  const isShiftAnchor = filters.anchor === 'shift';
 
-  const [sync, agentOptions, window] = await Promise.all([
+  const [sync, agentOptions, shiftCount] = await Promise.all([
     getSyncStatus(),
     getAgentOptions(),
-    resolveWindow(bounds),
+    countShifts(),
   ]);
 
-  const rows = await getAgentTotals(window, filters.agents);
+  let rows: TableRow[] = [];
+  // Login is served three different ways depending on the anchor, because
+  // login_time is only ever correct at the exact grain it was queried for.
+  //   shift  -> agent_shift, written by the sync from each shift's own window
+  //   other  -> /api/login-exact for the one continuous window (client fetch)
+  //   custom multi-day time window -> not offered at all
+  let shiftLogin: Record<string, number | null> | undefined;
+  let missingShiftLogin = 0;
+  let window: Awaited<ReturnType<typeof resolveWindow>> | null = null;
 
-  // A custom time-of-day window would need one CTM call per day in the range
-  // for an exact login figure, which is too slow for a page load. Every other
-  // anchor is a single continuous window, so one call covers it.
-  const loginAvailable = filters.anchor !== 'custom' || filters.from === filters.to;
+  if (isShiftAnchor) {
+    // A shift-anchored query has a DIFFERENT window per agent, so there is no
+    // single pair of instants to resolve -- the windows are built in SQL.
+    const shiftRows = await getShiftAnchoredTotals(filters.from, filters.to, filters.agents);
+    rows = shiftRows.map((row) => ({
+      ctmUserId: row.ctmUserId,
+      name: row.name,
+      onlineSeconds: row.onlineSeconds,
+      sessionSeconds: row.sessionSeconds,
+      talkSeconds: row.talkSeconds,
+      holdSeconds: row.holdSeconds,
+      inboundCalls: row.inboundCalls,
+      outboundCalls: row.outboundCalls,
+    }));
+    shiftLogin = Object.fromEntries(shiftRows.map((row) => [row.ctmUserId, row.loginSeconds]));
+    missingShiftLogin = shiftRows.reduce((sum, row) => sum + row.missingLogin, 0);
+  } else {
+    window = await resolveWindow(localBounds(filters));
+    rows = await getAgentTotals(window, filters.agents);
+  }
+
+  // A custom time-of-day window spanning several days would need one CTM call
+  // per day for an exact login figure -- too slow for a page load.
+  const loginMode: 'fetch' | 'given' | 'unavailable' = isShiftAnchor
+    ? 'given'
+    : filters.anchor === 'custom' && filters.from !== filters.to
+      ? 'unavailable'
+      : 'fetch';
 
   const active = rows.filter((row) => row.sessionSeconds > 0);
   const totalSession = active.reduce((sum, row) => sum + row.sessionSeconds, 0);
@@ -52,6 +84,20 @@ export default async function OverviewPage({
       />
 
       <div className="px-4 md:px-8 py-4 md:py-6 flex flex-col gap-4 md:gap-6">
+        {isShiftAnchor && shiftCount === 0 && (
+          <p className="flex items-start gap-2 rounded-lg border border-border bg-amber/10 px-4 py-3 text-md text-amber-dark">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <span>
+              No shifts are defined, so this anchor has nothing to group by and the table is
+              empty.{' '}
+              <Link href="/shifts" className="underline font-medium">
+                Define shifts
+              </Link>{' '}
+              to use it.
+            </span>
+          </p>
+        )}
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <StatTile
             label="Agents active"
@@ -79,15 +125,28 @@ export default async function OverviewPage({
 
         <AgentTable
           rows={rows}
-          windowStartIso={window.startAt.toISOString()}
-          windowEndIso={window.effectiveEndAt.toISOString()}
-          loginAvailable={loginAvailable}
+          loginMode={loginMode}
+          windowStartIso={window?.startAt.toISOString() ?? null}
+          windowEndIso={window?.effectiveEndAt.toISOString() ?? null}
+          givenLogin={shiftLogin}
+          missingLoginCount={missingShiftLogin}
         />
 
         <p className="text-2xs text-muted">
-          Window: {dateTimeIn(window.startAt, filters.zone)} –{' '}
-          {dateTimeIn(window.effectiveEndAt, filters.zone)} {ZONE_LABEL[filters.zone]}
-          {window.inProgress && ' · range still in progress, clamped to now'}
+          {isShiftAnchor ? (
+            <>
+              Anchored to each agent&apos;s own shift window, filed under the date the shift
+              started. Shift dates {filters.from} – {filters.to}.
+            </>
+          ) : (
+            window && (
+              <>
+                Window: {dateTimeIn(window.startAt, filters.zone)} –{' '}
+                {dateTimeIn(window.effectiveEndAt, filters.zone)} {ZONE_LABEL[filters.zone]}
+                {window.inProgress && ' · range still in progress, clamped to now'}
+              </>
+            )
+          )}
         </p>
       </div>
     </>
