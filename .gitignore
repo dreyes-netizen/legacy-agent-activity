@@ -7,3 +7,9 @@ venv/
 output/
 *.log
 .DS_Store
+
+# web/
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
