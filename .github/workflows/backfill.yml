@@ -1,0 +1,61 @@
+# One-off historical backfill. Manual only -- this is the expensive job.
+#
+#   day grain    1 CTM call/day    ~30s per day of history
+#   hour grain  24 CTM calls/day   ~12 min per day of history
+#
+# Resumable: windows already stored as final are skipped, so a run that hits
+# the job timeout can simply be started again.
+
+name: backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'YYYY-MM-DD (America/New_York)'
+        required: true
+        default: '2026-09-01'
+      end_date:
+        description: 'YYYY-MM-DD, blank = today'
+        default: ''
+      grain:
+        description: 'day (cheap, exact login_time) | hour (fine-grained) | both'
+        type: choice
+        options: [day, hour, both]
+        default: day
+
+concurrency:
+  group: ctm-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/migrate.py
+
+      - name: Backfill
+        env:
+          CTM_API_HOST: ${{ secrets.CTM_API_HOST }}
+          CTM_ACCESS_KEY: ${{ secrets.CTM_ACCESS_KEY }}
+          CTM_SECRET_KEY: ${{ secrets.CTM_SECRET_KEY }}
+          CTM_ACCOUNT_ID: ${{ secrets.CTM_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m sync.backfill \
+            --start-date "${{ inputs.start_date }}" \
+            ${{ inputs.end_date && format('--end-date {0}', inputs.end_date) || '' }} \
+            --grain "${{ inputs.grain }}"

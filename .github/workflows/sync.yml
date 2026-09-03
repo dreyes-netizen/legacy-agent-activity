@@ -1,0 +1,92 @@
+# Recurring CTM -> Neon sync.
+#
+# THREE TRIGGERS, so the driver can change without touching this file:
+#
+#   workflow_dispatch    Manual run from the Actions tab or `gh workflow run`.
+#   repository_dispatch  External scheduler (cron-job.org, Zapier, anything
+#                        that can POST). More reliable than GitHub's own
+#                        scheduler, which is best-effort and gets delayed or
+#                        dropped under load:
+#                          POST https://api.github.com/repos/OWNER/REPO/dispatches
+#                          Authorization: Bearer <fine-grained PAT, Actions:write>
+#                          Accept: application/vnd.github+json
+#                          {"event_type": "sync-tick"}
+#   schedule             DISABLED ON PURPOSE -- see the cost note below.
+#
+# COST WARNING before enabling `schedule` on a PRIVATE repo:
+#   A 5-minute cadence is ~8,640 runs/month. Actions bills per run rounded UP
+#   to the whole minute. The sync itself is fast (measured ~4s of CTM latency,
+#   ~11s total), but checkout + setup-python + pip install put a run at
+#   ~40-50s, so every run still bills the 1-minute minimum: ~8,640 min/month
+#   against an included 2,000 (Free) or 3,000 (Pro). Overage is roughly
+#   $45-55/month.
+#   Public repos get unlimited free minutes. A Vercel Python function driven by
+#   cron-job.org costs nothing and skips the per-run setup overhead, which is
+#   where almost all of that bill comes from. Decide the host before
+#   uncommenting this.
+#
+# schedule:
+#   - cron: '*/5 * * * *'   # NOTE: GitHub cron is UTC only
+#   - cron: '7 * * * *'     # hourly settle pass
+
+name: sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'tick (fast, in-progress windows) or settle (deeper pass)'
+        type: choice
+        options: [tick, settle]
+        default: tick
+      max_windows:
+        description: 'Cap on CTM API calls this run'
+        default: '6'
+  repository_dispatch:
+    types: [sync-tick, sync-settle]
+
+# Ticks are idempotent, so an overlap is harmless -- just wasteful. Serialize.
+concurrency:
+  group: ctm-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            case "${{ github.event.action }}" in
+              sync-settle) echo "mode=settle" >> "$GITHUB_OUTPUT" ;;
+              *)           echo "mode=tick"   >> "$GITHUB_OUTPUT" ;;
+            esac
+            echo "trigger=dispatch" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=${{ inputs.mode || 'tick' }}" >> "$GITHUB_OUTPUT"
+            echo "trigger=manual" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync
+        env:
+          CTM_API_HOST: ${{ secrets.CTM_API_HOST }}
+          CTM_ACCESS_KEY: ${{ secrets.CTM_ACCESS_KEY }}
+          CTM_SECRET_KEY: ${{ secrets.CTM_SECRET_KEY }}
+          CTM_ACCOUNT_ID: ${{ secrets.CTM_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m sync.tick \
+            --mode "${{ steps.mode.outputs.mode }}" \
+            --trigger "${{ steps.mode.outputs.trigger }}" \
+            --max-windows "${{ inputs.max_windows || 6 }}"
