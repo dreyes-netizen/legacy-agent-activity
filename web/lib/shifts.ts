@@ -106,7 +106,7 @@ export function validateShift(input: ShiftInput): string | null {
 export async function saveShift(
   input: ShiftInput,
   id?: number,
-): Promise<{ id: number; queued: number }> {
+): Promise<{ id: number; queued: number; queueError?: string }> {
   const timezone = input.timezone || MANILA;
   const weekdays = input.weekdays && input.weekdays.length > 0 ? input.weekdays : null;
 
@@ -137,8 +137,22 @@ export async function saveShift(
   )[0];
 
   if (!saved) throw new Error('Shift was not saved.');
-  const queued = await enqueueShiftBackfill(saved.id);
-  return { id: saved.id, queued };
+
+  // The shift write and the queueing are separate statements (the Neon HTTP
+  // driver has no transaction that can carry the RETURNING id between them), so
+  // a queue failure must not be reported as a failed save -- the shift really
+  // is stored, and saying otherwise sends someone to re-enter it. The queue is
+  // recoverable: re-saving the shift enqueues it again.
+  try {
+    const queued = await enqueueShiftBackfill(saved.id);
+    return { id: saved.id, queued };
+  } catch (error) {
+    return {
+      id: saved.id,
+      queued: 0,
+      queueError: error instanceof Error ? error.message : 'could not queue login backfill',
+    };
+  }
 }
 
 export async function deleteShift(id: number): Promise<void> {
@@ -164,8 +178,13 @@ export async function enqueueShiftBackfill(shiftId: number): Promise<number> {
              ((CASE WHEN s.end_local > s.start_local THEN d::date ELSE d::date + 1 END
                + s.end_local) AT TIME ZONE s.timezone) AS window_end
         FROM s
+        -- The ::int cast is required, not decorative. The driver sends bound
+        -- parameters untyped, so CURRENT_DATE - $1 is ambiguous: Postgres
+        -- resolves $1 as a date, making the expression date - date -> integer,
+        -- and GREATEST(date, integer) then fails with "types date and integer
+        -- cannot be matched". Forcing $1 to int selects date - int -> date.
         CROSS JOIN generate_series(
-               GREATEST(s.effective_from, (CURRENT_DATE - ${MAX_QUEUED_OCCURRENCES})),
+               GREATEST(s.effective_from, (CURRENT_DATE - ${MAX_QUEUED_OCCURRENCES}::int)),
                LEAST(COALESCE(s.effective_to, CURRENT_DATE), CURRENT_DATE),
                interval '1 day') AS d
        WHERE s.weekdays IS NULL

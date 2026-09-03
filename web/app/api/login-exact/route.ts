@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
                                login_seconds, online_seconds, session_seconds,
                                talk_seconds, hold_seconds, is_final)
       SELECT u.ctm_user_id, ${startIso}::timestamptz, ${endIso}::timestamptz,
-             u.login, u.online, u.session, u.talk, u.hold, ${isFinal}
+             u.login, u.online, u.session, u.talk, u.hold, ${isFinal}::boolean
         FROM UNNEST(
                ${rows.map((r) => r.agent.ctm_user_id)}::text[],
                ${rows.map((r) => r.m.loginSeconds)}::numeric[],

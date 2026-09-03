@@ -50,9 +50,18 @@ export async function upsertShiftAction(
   if (problem) return { error: problem };
 
   try {
-    const { queued } = await saveShift(input, id);
+    const { queued, queueError } = await saveShift(input, id);
     revalidatePath('/shifts');
     revalidatePath('/');
+    if (queueError) {
+      // Saved, but the exact-login backfill could not be queued. Say both
+      // things -- reporting only the failure would send someone to re-enter a
+      // shift that is already stored.
+      return {
+        success: 'Shift saved.',
+        error: `Saved, but the login backfill could not be queued (${queueError}). Re-save to retry.`,
+      };
+    }
     return {
       success:
         queued > 0

@@ -12,7 +12,7 @@
 //       daily figures under-counted one agent by 8h19m against a single
 //       three-day query, because each daily query clips a session at midnight
 //       and clipping loses login time. It therefore only ever comes from an
-//       exact query of the displayed window -- see getCachedLogin below and
+//       exact query of the displayed window -- see
 //       /api/login-exact.
 import 'server-only';
 import { sql } from './db/neon';
@@ -35,8 +35,8 @@ export interface Window {
  */
 export async function resolveWindow(bounds: LocalBounds): Promise<Window> {
   const rows = (await sql`
-    SELECT (${bounds.startLocal}::timestamp AT TIME ZONE ${bounds.zone}) AS start_at,
-           (${bounds.endLocal}::timestamp   AT TIME ZONE ${bounds.zone}) AS end_at,
+    SELECT (${bounds.startLocal}::timestamp AT TIME ZONE ${bounds.zone}::text) AS start_at,
+           (${bounds.endLocal}::timestamp   AT TIME ZONE ${bounds.zone}::text) AS end_at,
            now() AS now_at
   `) as Array<{ start_at: string; end_at: string; now_at: string }>;
 
@@ -111,31 +111,6 @@ export async function getAgentTotals(
     outboundCalls: Number(row.outbound_calls),
     loginSeconds: null,
   }));
-}
-
-/** How long a non-final cached window stays trusted, matching the sync cadence. */
-const RANGE_CACHE_TTL_SECONDS = 300;
-
-/**
- * Exact login seconds for a window, if already cached.
- *
- * A final window (fully in the past) is trusted forever. A window still in
- * progress ends at "now", so its cached value is only trusted briefly before
- * being re-queried.
- */
-export async function getCachedLogin(
-  window: Window,
-): Promise<Record<string, number> | null> {
-  const rows = (await sql`
-    SELECT ctm_user_id, login_seconds
-      FROM agent_range
-     WHERE window_start = ${window.startAt.toISOString()}::timestamptz
-       AND window_end   = ${window.effectiveEndAt.toISOString()}::timestamptz
-       AND (is_final OR synced_at > now() - make_interval(secs => ${RANGE_CACHE_TTL_SECONDS}))
-  `) as Array<{ ctm_user_id: string; login_seconds: string }>;
-
-  if (rows.length === 0) return null;
-  return Object.fromEntries(rows.map((row) => [row.ctm_user_id, Number(row.login_seconds)]));
 }
 
 export interface AgentOption {
