@@ -208,6 +208,75 @@ def upsert_shift(conn, shift_date, window_start, window_end, shift_id,
     return 1
 
 
+RANGE_UPSERT = """
+INSERT INTO agent_range (
+    ctm_user_id, window_start, window_end,
+    login_seconds, online_seconds, session_seconds, talk_seconds, hold_seconds,
+    is_final, synced_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+ON CONFLICT (ctm_user_id, window_start, window_end) DO UPDATE SET
+    login_seconds = EXCLUDED.login_seconds,
+    online_seconds = EXCLUDED.online_seconds,
+    session_seconds = EXCLUDED.session_seconds,
+    talk_seconds = EXCLUDED.talk_seconds,
+    hold_seconds = EXCLUDED.hold_seconds,
+    is_final = EXCLUDED.is_final,
+    synced_at = now()
+"""
+
+
+def upsert_range(conn, window_start, window_end, metrics_by_id, email_by_id,
+                 agent_ids, is_final):
+    """
+    Cache an exact-window query. This is the only correct source of login_time
+    for a window that is neither a full ET day nor a defined shift, because
+    login_time cannot be derived by summing anything.
+    """
+    rows = []
+    for numeric_id, metrics in metrics_by_id.items():
+        email = email_by_id.get(numeric_id)
+        agent_id = agent_ids.get(email)
+        if not agent_id:
+            continue
+        rows.append((
+            agent_id, window_start, window_end,
+            _metric(metrics, "login_seconds"),
+            _metric(metrics, "online_seconds"),
+            _metric(metrics, "session_seconds"),
+            _metric(metrics, "talk_seconds"),
+            _metric(metrics, "hold_seconds"),
+            is_final,
+        ))
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        cur.executemany(RANGE_UPSERT, rows)
+    conn.commit()
+    return len(rows)
+
+
+def cached_range(conn, window_start, window_end, max_age_seconds=300):
+    """
+    Rows for an already-queried window, or [] if it must be fetched.
+
+    A final window is trusted forever. A non-final one (its end was in the
+    future when queried, so it really meant "up to then") is only trusted for
+    max_age_seconds -- matching the sync cadence -- then re-queried.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT r.*, a.email, a.name
+              FROM agent_range r
+              JOIN agents a ON a.ctm_user_id = r.ctm_user_id
+             WHERE r.window_start = %s AND r.window_end = %s
+               AND (r.is_final OR r.synced_at > now() - make_interval(secs => %s))
+            """,
+            (window_start, window_end, max_age_seconds),
+        )
+        return cur.fetchall()
+
+
 def finalize_stale(conn, cutoff):
     """
     Mark buckets older than the settling cutoff as final so the tick stops

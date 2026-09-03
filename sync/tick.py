@@ -128,7 +128,13 @@ def run(mode="tick", trigger="manual", max_windows=6, queue_items=2):
                     numeric_ids[email] = uid
             queried += 1
             api_seconds += elapsed
-            print(f"  {kind:5} {start:%Y-%m-%d %H:%M} -> {end:%H:%M}  {elapsed:.1f}s")
+            # Normalise to the reporting timezone before printing. Shift windows
+            # are built in the shift's own zone (usually Asia/Manila), so a raw
+            # %H:%M would render Manila local time here and make a 09:00 ET shift
+            # look like it starts at 21:00.
+            log_start = start.astimezone(ctm.TZ)
+            log_end = end.astimezone(ctm.TZ)
+            print(f"  {kind:5} {log_start:%Y-%m-%d %H:%M} -> {log_end:%H:%M} ET  {elapsed:.1f}s")
 
         db.set_numeric_ids(conn, numeric_ids)
 

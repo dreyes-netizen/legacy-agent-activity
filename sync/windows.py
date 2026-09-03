@@ -8,10 +8,18 @@ still answers the question.
 """
 
 from datetime import date, datetime, time as dt_time, timedelta
+from zoneinfo import ZoneInfo
 
 from . import ctm
 
 TZ = ctm.TZ
+
+# Shifts are entered by team leaders in Manila time, so that is the default
+# when a shift row predates the timezone column. The zone must travel with the
+# clock time: the Manila/New_York offset is 12h from March to November and 13h
+# outside it (ET has DST, Manila does not), so a bare "21:00" means a different
+# instant depending on the date.
+DEFAULT_SHIFT_TZ = "Asia/Manila"
 
 # How long after a bucket closes we keep re-querying it, in case CTM revises
 # numbers slightly after the fact. Every window I sampled was already stable,
@@ -63,18 +71,23 @@ def day_range(start_date, end_date):
         current += timedelta(days=1)
 
 
-def shift_window(start_local, end_local, shift_date):
+def shift_window(start_local, end_local, shift_date, timezone=DEFAULT_SHIFT_TZ):
     """
     Concrete window for one shift occurrence.
 
     end_local <= start_local means the shift crosses midnight, so the end
     lands on the following calendar day. shift_date is always the date the
-    shift STARTED -- that is what keeps a 21:00-06:00 shift on a single row
-    instead of splitting it across two days.
+    shift STARTED, in the shift's OWN timezone -- that is what keeps a
+    21:00-06:00 shift on a single row instead of splitting it across two days.
+
+    The clock times are interpreted in `timezone`, not in the reporting
+    timezone, so a Manila-entered shift resolves to the right instant on both
+    sides of the November DST change.
     """
-    start_dt = datetime.combine(shift_date, start_local, tzinfo=TZ)
+    zone = ZoneInfo(timezone or DEFAULT_SHIFT_TZ)
+    start_dt = datetime.combine(shift_date, start_local, tzinfo=zone)
     end_date = shift_date if end_local > start_local else shift_date + timedelta(days=1)
-    end_dt = datetime.combine(end_date, end_local, tzinfo=TZ)
+    end_dt = datetime.combine(end_date, end_local, tzinfo=zone)
     return start_dt, end_dt
 
 
@@ -91,16 +104,22 @@ def open_shift_windows(shifts, now=None):
     Shift occurrences that are still in progress (or ended within the settling
     window), for today and yesterday -- yesterday matters because a night
     shift that started at 21:00 is still open at 02:00 the next day.
+
+    "Today" is resolved in each shift's own timezone, not the reporting one:
+    for a Manila shift, the relevant calendar date is the Manila date, which
+    can be a day ahead of the ET date for half of every day.
     """
     now = (now or datetime.now(TZ)).astimezone(TZ)
     cutoff = now - timedelta(hours=SETTLING_HOURS)
-    today = now.date()
     out = []
     for shift in shifts:
-        for shift_date in (today - timedelta(days=1), today):
+        tz_name = shift.get("timezone") or DEFAULT_SHIFT_TZ
+        local_today = now.astimezone(ZoneInfo(tz_name)).date()
+        for shift_date in (local_today - timedelta(days=1), local_today):
             if not shift_applies(shift, shift_date):
                 continue
-            start_dt, end_dt = shift_window(shift["start_local"], shift["end_local"], shift_date)
+            start_dt, end_dt = shift_window(
+                shift["start_local"], shift["end_local"], shift_date, tz_name)
             if start_dt <= now and end_dt >= cutoff:
                 out.append((shift, shift_date, start_dt, min(end_dt, now)))
     return out
@@ -122,3 +141,15 @@ def clamp_to_now(start_dt, end_dt, now=None):
     """Never ask CTM about the future; an open window ends at 'now'."""
     now = (now or datetime.now(TZ)).astimezone(TZ)
     return start_dt, min(end_dt, now)
+
+
+def is_final(end_dt, now=None, settling_hours=SETTLING_HOURS):
+    """
+    Whether a window is closed enough that its numbers will not change again.
+
+    Final rows can be cached indefinitely. A window whose end is still in the
+    future effectively ends at 'now', so caching it by (start, end) would mint
+    a new row every minute -- those stay non-final and get re-queried.
+    """
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    return end_dt < now - timedelta(hours=settling_hours)
