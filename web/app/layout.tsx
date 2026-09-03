@@ -22,6 +22,10 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Agent Activity — AGS',
   description: 'Alliance Global Solutions — agent online, session and login time',
+  icons: [
+    { rel: 'icon', url: '/agslogo.png', type: 'image/png' },
+    { rel: 'shortcut icon', url: '/agslogo.png', type: 'image/png' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

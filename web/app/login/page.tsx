@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { AlertCircle } from 'lucide-react';
 import { CARD, INPUT, LABEL, MICRO_LABEL } from '@/components/ui/style';
 import { cn } from '@/lib/utils';
@@ -20,9 +21,16 @@ export default function LoginPage({
     <div className="min-h-screen bg-ground flex items-center justify-center px-4 py-10">
       <div className={cn(CARD, 'w-full max-w-sm p-6 animate-fade-in-up')}>
         <div className="flex flex-col items-center gap-2.5 mb-6">
-          <div className="w-14 h-14 rounded-xl bg-navy flex items-center justify-center">
-            <span className="font-mono text-lg font-bold text-white tracking-tight">AGS</span>
-          </div>
+          {/* No plate here: the card is already white, and the mark is dark, so
+              it reads on its own. A navy plate would have hidden it. */}
+          <Image
+            src="/agslogo.png"
+            alt=""
+            width={512}
+            height={444}
+            priority
+            className="h-14 w-auto object-contain"
+          />
           <div className="text-center">
             <p className={cn(MICRO_LABEL, 'text-2xs mb-0.5')}>Alliance Global Solutions</p>
             <h1 className="text-lg font-semibold tracking-tight">Agent Activity</h1>

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LogOut } from 'lucide-react';
@@ -37,8 +38,20 @@ export function Sidebar() {
       className="w-[220px] bg-navy flex flex-col flex-shrink-0 h-screen max-md:hidden print:hidden"
     >
       <div className="px-5 py-[18px] border-b border-white/[0.07] flex flex-col items-center gap-2.5">
-        <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center">
-          <span className="font-mono text-xl font-bold text-navy tracking-tight">AGS</span>
+        {/* White plate because the mark is mostly dark (average rgb(63,96,149))
+            and would disappear against the navy. object-contain because the
+            source is 1.153:1, not square -- a fixed square would squash it. */}
+        <div className="w-16 h-16 rounded-xl bg-white flex items-center justify-center p-2">
+          <Image
+            src="/agslogo.png"
+            // Empty alt: "Alliance Global Solutions" is rendered as text
+            // immediately below, so a described image would be announced twice.
+            alt=""
+            width={512}
+            height={444}
+            priority
+            className="w-full h-auto object-contain"
+          />
         </div>
         <div className="text-center">
           <p className="font-mono text-2xs tracking-mono-widest uppercase text-white/60 mb-0.5">
