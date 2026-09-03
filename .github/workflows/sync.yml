@@ -8,7 +8,8 @@
 #                        scheduler, which is best-effort and gets delayed or
 #                        dropped under load:
 #                          POST https://api.github.com/repos/OWNER/REPO/dispatches
-#                          Authorization: Bearer <fine-grained PAT, Actions:write>
+#                          Authorization: Bearer <PAT: classic repo scope, or
+#                            fine-grained with Contents: Read and write>
 #                          Accept: application/vnd.github+json
 #                          {"event_type": "sync-tick"}
 #   schedule             DISABLED ON PURPOSE -- see the cost note below.

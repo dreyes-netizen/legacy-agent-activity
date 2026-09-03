@@ -106,10 +106,14 @@ without touching the code:
 - `repository_dispatch` — external scheduler (cron-job.org and friends):
   ```
   POST https://api.github.com/repos/OWNER/REPO/dispatches
-  Authorization: Bearer <fine-grained PAT, Actions:write on this repo only>
+  Authorization: Bearer <PAT>
   Accept: application/vnd.github+json
   {"event_type": "sync-tick"}     # or "sync-settle"
   ```
+  The token needs write access to this repo's contents: a classic PAT with
+  `repo` scope (verified working), or a fine-grained PAT scoped to this
+  repository only with **Contents: Read and write**. `Actions: write` alone
+  is not sufficient for the dispatch endpoint.
 - `schedule` — commented out, but **free to enable on this repo**, which is
   public and therefore gets unlimited Actions minutes. Worth turning on purely
   as a *fallback* behind cron-job.org: if an external poke is missed, the next
