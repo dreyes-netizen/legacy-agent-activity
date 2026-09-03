@@ -7,6 +7,75 @@ cross midnight report as one shift instead of being split across two calendar da
 Feeds a Next.js dashboard (not in this repo yet). The dashboard reads Neon only;
 nothing user-facing ever calls CTM.
 
+## What the three metrics mean
+
+CTM does not document these clearly, so the following was reverse-engineered
+from a full raw payload (2026-09-02, all 47 account users) and holds exactly:
+
+```
+session_time  =  online  +  talk_time
+```
+
+Residual `0.00s` for **every one of the 47 users**. So `online` does **not**
+mean "logged in and working" — it means *available and not on a call*. The
+moment a call connects an agent stops accruing `online` and starts accruing
+`talk_time`; both roll up into `session_time`.
+
+```
+login_time    ████████████████████████████████████  9:01:55   signed in
+  session_time      ██████████████████████          6:18:21   active
+    online          ████████████████                4:20:46   idle, waiting
+    talk_time                       ██████          1:57:35   on a call
+```
+
+| Metric | Answers | Notes |
+|---|---|---|
+| `login_time` | *Were they here?* | Attendance / shift adherence |
+| `session_time` | *Were they working?* | `= online + talk` |
+| `online` | *Were they reachable?* | Idle and available, excludes call time |
+
+`login_time >= session_time >= online` held for every agent on a full-day
+window, with no violations. In **clipped sub-day** windows the ordering can
+invert (one agent's 09:00-11:00 slice showed `login 1:37:40` but
+`online 1:53:11`) — that is the span-measurement artifact described below, not
+a real signal.
+
+Supporting details, all verified:
+
+- **`login_time` always has `count == 1`** (all 47 users), while
+  `session_time` has 21-157 and `online` 13-82. `login_time` is a single span
+  from first login to last logout, clipped to the window edges — not a sum of
+  segments. That is precisely why it cannot be sliced or summed: an hour
+  bucket containing no login/logout event has no endpoints to measure between.
+- **`occupancy` is `session_time` with a percentage attached.** Totals are
+  byte-identical (max difference `0.00`), and its `percent` field is exactly
+  `talk_time / session_time` — the textbook contact-centre occupancy formula,
+  `busy / (busy + idle)`. Free to use; no extra API call.
+- **`talk_time == handle_time`** here (max difference `0.00`), because
+  `wrapup_time` is `0` account-wide. Do not present them as two independent
+  columns.
+- **`hold_time` sits inside `talk_time`**, not alongside it — it does not
+  appear in the `session - online` gap.
+
+### Open question: the login vs session gap
+
+`session - online` is fully explained (it is talk time). `login - session` is
+not, and it is large — roughly **four hours of a nine-hour sign-in** for
+several agents:
+
+| Agent | login | session | unaccounted |
+|---|---|---|---|
+| A | 9:12:25 | 4:49:42 | 4:22:43 |
+| B | 8:53:15 | 4:49:01 | 4:04:14 |
+| C | 6:35:55 | 2:28:14 | 4:07:41 |
+
+That may be legitimate break/away status, or an artifact of `login_time` being
+a first-to-last span that stretches across a mid-shift logout. **This has not
+been established.** Since this data is likely to inform performance
+conversations, validate the gap against one agent's known schedule — the
+`/agents/events.json` stream can reconstruct an actual state timeline — before
+anyone reads it as idle time.
+
 ## Why the schema looks like this
 
 The three metrics come from the same endpoint but behave differently when you
