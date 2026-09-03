@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import {
   CARD,
@@ -104,10 +104,16 @@ export function AgentTable({
     return () => controller.abort();
   }, [windowStartIso, windowEndIso, loginMode]);
 
-  const loginFor = (id: string): number | null => {
-    if (loginMode === 'given') return givenLogin?.[id] ?? null;
-    return login.status === 'ready' ? (login.login[id] ?? 0) : null;
-  };
+  // useCallback so the sort memo below can depend on it honestly. Without it the
+  // memo read loginFor while listing only `login` as a dependency, so sorting by
+  // Login could rank rows on a stale lookup.
+  const loginFor = useCallback(
+    (id: string): number | null => {
+      if (loginMode === 'given') return givenLogin?.[id] ?? null;
+      return login.status === 'ready' ? (login.login[id] ?? 0) : null;
+    },
+    [loginMode, givenLogin, login],
+  );
 
   const sorted = useMemo(() => {
     const value = (row: TableRow): number | string => {
@@ -135,7 +141,7 @@ export function AgentTable({
           : Number(left) - Number(right);
       return sort.dir === 'asc' ? comparison : -comparison;
     });
-  }, [rows, sort, login]);
+  }, [rows, sort, loginFor]);
 
   function toggleSort(key: SortKey) {
     setSort((current) =>

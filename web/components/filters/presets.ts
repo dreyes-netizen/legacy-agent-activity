@@ -1,5 +1,4 @@
-import { EASTERN, type DisplayZone } from '@/lib/time';
-import { addDays, todayIn, type Filters } from '@/lib/filters';
+import { addDays, anchorZone, todayIn, type Filters } from '@/lib/filters';
 
 export type PresetId = 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'lastMonth';
 
@@ -25,8 +24,7 @@ function monthBounds(isoDate: string, monthsBack: number): { from: string; to: s
  * dashboard exists to remove -- so it must not be papered over here.
  */
 export function applyPreset(filters: Filters, preset: PresetId): Partial<Filters> {
-  const zone: DisplayZone = filters.anchor === 'et-day' ? EASTERN : filters.zone;
-  const today = todayIn(zone);
+  const today = todayIn(anchorZone(filters));
 
   switch (preset) {
     case 'today':

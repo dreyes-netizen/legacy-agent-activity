@@ -52,6 +52,37 @@ export interface RawFilterParams {
   tz?: string;
 }
 
+/**
+ * The zone the selected DATES are interpreted in -- which is not the same thing
+ * as the zone times are displayed in.
+ *
+ * These two were conflated, and it was a real bug: "Manila day" fell through to
+ * the display zone, so switching the display to Eastern silently moved the
+ * window 12 hours while the label still said Manila day. A day anchor now names
+ * its own zone and cannot be overridden by a display preference.
+ *
+ * The display zone still matters in two places, so the control is not
+ * redundant: it interprets the clock times of a custom window, and it chooses
+ * how an already-fixed window is rendered (handy for reconciling against the
+ * Eastern-based legacy KPI reports).
+ */
+export function anchorZone(filters: Pick<Filters, 'anchor' | 'zone'>): DisplayZone {
+  switch (filters.anchor) {
+    case 'et-day':
+      return EASTERN;
+    case 'mnl-day':
+      return MANILA;
+    // Shift dates are the shift's own local date, and shifts are entered in
+    // Manila by default.
+    case 'shift':
+      return MANILA;
+    // Only here does the display zone genuinely define the window: it is what
+    // "21:00 to 06:00" is measured against.
+    case 'custom':
+      return filters.zone;
+  }
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -83,8 +114,7 @@ export function parseFilters(params: RawFilterParams, now: Date = new Date()): F
   // "today" means the team leader's today (Manila) unless the Eastern-day
   // anchor is selected, where it means the Eastern date. The two differ for
   // half of every day, which is the confusion this dashboard exists to remove.
-  const anchorZone: DisplayZone = anchor === 'et-day' ? EASTERN : zone;
-  const today = todayIn(anchorZone, now);
+  const today = todayIn(anchorZone({ anchor, zone }), now);
   const from = params.from && DATE_RE.test(params.from) ? params.from : today;
   const to = params.to && DATE_RE.test(params.to) ? params.to : today;
 
@@ -139,17 +169,16 @@ export function localBounds(filters: Filters): LocalBounds {
     return {
       startLocal: `${filters.from} ${filters.fromTime}:00`,
       endLocal: `${endDate} ${filters.toTime}:00`,
-      zone: filters.zone,
+      zone: anchorZone(filters),
     };
   }
 
-  const zone: DisplayZone = filters.anchor === 'et-day' ? EASTERN : filters.zone;
   return {
     startLocal: `${filters.from} 00:00:00`,
     // Exclusive upper bound expressed as the next day's midnight, which avoids
     // the 23:59:59 gap that silently drops the final second of a day.
     endLocal: `${addDays(filters.to, 1)} 00:00:00`,
-    zone,
+    zone: anchorZone(filters),
   };
 }
 

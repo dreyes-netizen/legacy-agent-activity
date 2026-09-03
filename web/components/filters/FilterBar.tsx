@@ -6,7 +6,14 @@ import { Loader2 } from 'lucide-react';
 import { HEADER_INPUT, HEADER_LABEL } from '@/components/ui/style';
 import { AgentPicker } from './AgentPicker';
 import { PRESETS, applyPreset } from './presets';
-import { ANCHOR_LABEL, serializeFilters, todayIn, type Anchor, type Filters } from '@/lib/filters';
+import {
+  ANCHOR_LABEL,
+  anchorZone,
+  serializeFilters,
+  todayIn,
+  type Anchor,
+  type Filters,
+} from '@/lib/filters';
 import { EASTERN, MANILA, ZONE_LABEL, type DisplayZone } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import type { AgentOption } from '@/lib/metrics';
@@ -34,11 +41,9 @@ export function FilterBar({
     // still are today in the old zone, so an explicitly chosen date is kept
     // (comparing one specific day across both anchors is a real thing to want).
     if (patch.anchor && patch.anchor !== filters.anchor) {
-      const oldZone = filters.anchor === 'et-day' ? EASTERN : filters.zone;
-      const newZone = next.anchor === 'et-day' ? EASTERN : next.zone;
-      const oldToday = todayIn(oldZone);
+      const oldToday = todayIn(anchorZone(filters));
       if (filters.from === oldToday && filters.to === oldToday) {
-        const newToday = todayIn(newZone);
+        const newToday = todayIn(anchorZone(next));
         next.from = newToday;
         next.to = newToday;
       }
@@ -74,6 +79,7 @@ export function FilterBar({
           <select
             value={filters.anchor}
             onChange={(event) => update({ anchor: event.target.value as Anchor })}
+            title="Which window the figures cover. A day anchor sets its own timezone; Custom uses the timezone selected alongside."
             className={cn(HEADER_INPUT, 'cursor-pointer')}
           >
             {ANCHOR_ORDER.map((anchor) => (
@@ -85,10 +91,22 @@ export function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className={HEADER_LABEL}>Times shown in</span>
+          {/* Two different jobs, so the label says which one applies. For a day
+              or shift anchor the window is already fixed and this only changes
+              how it reads -- useful for reconciling against the Eastern-based
+              legacy KPI reports. For a custom window it defines the window,
+              because it is what the entered clock times are measured against. */}
+          <span className={HEADER_LABEL}>
+            {filters.anchor === 'custom' ? 'Times entered in' : 'Times shown in'}
+          </span>
           <select
             value={filters.zone}
             onChange={(event) => update({ zone: event.target.value as DisplayZone })}
+            title={
+              filters.anchor === 'custom'
+                ? 'The timezone the start and end times are measured in. Changes the window.'
+                : 'Display only. The window is set by "Day defined by" and does not change.'
+            }
             className={cn(HEADER_INPUT, 'cursor-pointer')}
           >
             {[MANILA, EASTERN].map((zone) => (
@@ -134,7 +152,7 @@ export function FilterBar({
         {filters.anchor === 'custom' && (
           <>
             <label className="flex flex-col gap-1">
-              <span className={HEADER_LABEL}>Start time</span>
+              <span className={HEADER_LABEL}>Start ({ZONE_LABEL[filters.zone]})</span>
               <input
                 type="time"
                 value={filters.fromTime}
@@ -143,7 +161,7 @@ export function FilterBar({
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className={HEADER_LABEL}>End time</span>
+              <span className={HEADER_LABEL}>End ({ZONE_LABEL[filters.zone]})</span>
               <input
                 type="time"
                 value={filters.toTime}
