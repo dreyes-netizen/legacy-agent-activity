@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { HEADER_INPUT, HEADER_LABEL } from '@/components/ui/style';
 import { AgentPicker } from './AgentPicker';
 import { PRESETS, applyPreset } from './presets';
-import { ANCHOR_LABEL, serializeFilters, type Anchor, type Filters } from '@/lib/filters';
+import { ANCHOR_LABEL, serializeFilters, todayIn, type Anchor, type Filters } from '@/lib/filters';
 import { EASTERN, MANILA, ZONE_LABEL, type DisplayZone } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import type { AgentOption } from '@/lib/metrics';
@@ -25,6 +25,25 @@ export function FilterBar({
 
   function update(patch: Partial<Filters>) {
     const next = { ...filters, ...patch };
+
+    // Switching the anchor changes which zone the dates are read in, and Manila
+    // and Eastern are on different dates for half of every day. Someone looking
+    // at "today" who switches to the Eastern-day anchor would otherwise keep the
+    // Manila date -- which in Eastern terms has not happened yet, emptying the
+    // table as though something were broken. Re-resolve only when the dates
+    // still are today in the old zone, so an explicitly chosen date is kept
+    // (comparing one specific day across both anchors is a real thing to want).
+    if (patch.anchor && patch.anchor !== filters.anchor) {
+      const oldZone = filters.anchor === 'et-day' ? EASTERN : filters.zone;
+      const newZone = next.anchor === 'et-day' ? EASTERN : next.zone;
+      const oldToday = todayIn(oldZone);
+      if (filters.from === oldToday && filters.to === oldToday) {
+        const newToday = todayIn(newZone);
+        next.from = newToday;
+        next.to = newToday;
+      }
+    }
+
     startTransition(() => {
       router.push(`/?${serializeFilters(next)}`);
     });

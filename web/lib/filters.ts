@@ -79,11 +79,13 @@ export function parseFilters(params: RawFilterParams, now: Date = new Date()): F
     ? (params.anchor as Anchor)
     : 'mnl-day';
 
-  // Default to the last 7 days in whichever zone the dates are read in, so a
-  // first visit shows something useful rather than an empty range.
+  // Default to today, resolved in whichever zone the dates are read in -- so
+  // "today" means the team leader's today (Manila) unless the Eastern-day
+  // anchor is selected, where it means the Eastern date. The two differ for
+  // half of every day, which is the confusion this dashboard exists to remove.
   const anchorZone: DisplayZone = anchor === 'et-day' ? EASTERN : zone;
   const today = todayIn(anchorZone, now);
-  const from = params.from && DATE_RE.test(params.from) ? params.from : addDays(today, -6);
+  const from = params.from && DATE_RE.test(params.from) ? params.from : today;
   const to = params.to && DATE_RE.test(params.to) ? params.to : today;
 
   return {
