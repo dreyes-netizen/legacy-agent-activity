@@ -3,6 +3,7 @@ import { Users, Clock, Radio, PhoneCall, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StatTile } from '@/components/ui/StatTile';
 import { FreshnessBadge } from '@/components/ui/FreshnessBadge';
+import { AutoRefresh } from '@/components/ui/AutoRefresh';
 import { FilterBar } from '@/components/filters/FilterBar';
 import { AgentTable, type TableRow } from '@/components/agents/AgentTable';
 import { getSyncStatus } from '@/lib/queries';
@@ -79,7 +80,12 @@ export default async function OverviewPage({
         label="Alliance Global Solutions"
         title="Agent Activity"
         subtitle={describeRange(filters)}
-        meta={<FreshnessBadge lastSyncIso={sync.lastSyncAt} />}
+        meta={
+          <span className="flex items-center gap-2">
+            <FreshnessBadge lastSyncIso={sync.lastSyncAt} />
+            <AutoRefresh />
+          </span>
+        }
         actions={<FilterBar filters={filters} agentOptions={agentOptions} />}
       />
 
